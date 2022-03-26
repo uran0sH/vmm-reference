@@ -64,7 +64,7 @@ use vm_vcpu::vm::{self, ExitHandler, KvmVm, VmConfig};
 use devices::legacy::RtcWrapper;
 
 #[cfg(target_arch = "aarch64")]
-use arch::{create_fdt, AARCH64_FDT_MAX_SIZE, AARCH64_MMIO_BASE, AARCH64_PHYS_MEM_START};
+use arch::{FdtBuilder, AARCH64_FDT_MAX_SIZE, AARCH64_MMIO_BASE, AARCH64_PHYS_MEM_START};
 
 mod boot;
 mod config;
@@ -610,14 +610,13 @@ impl Vmm {
     fn setup_fdt(&mut self) -> Result<()> {
         let mut fdt_offset: u64 = self.guest_memory.iter().map(|region| region.len()).sum();
         fdt_offset = fdt_offset - AARCH64_FDT_MAX_SIZE - 0x10000;
-        create_fdt(
+        FdtBuilder::new(
             self.kernel_cfg.cmdline.as_str(),
             self.num_vcpus.try_into().unwrap(),
             &self.guest_memory,
             fdt_offset,
-            0x40000000,
-            0x40001000,
         )
+        .create_fdt()
         .map_err(Error::SetupFdt)?;
 
         Ok(())

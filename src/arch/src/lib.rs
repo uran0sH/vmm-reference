@@ -63,43 +63,76 @@ impl From<GuestMemoryError> for Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-pub fn create_fdt<T: GuestMemory>(
-    cmdline: &str,
+pub struct FdtBuilder<'a, T: GuestMemory> {
+    cmdline: &'a str,
     num_vcpus: u32,
-    guest_mem: &T,
+    guest_mem: &'a T,
     fdt_load_offset: u64,
     serial_addr: u64,
     rtc_addr: u64,
-) -> Result<()> {
-    let mut fdt = FdtWriter::new()?;
+}
 
-    // The whole thing is put into one giant node with s
-    // ome top level properties
-    let root_node = fdt.begin_node("")?;
-    fdt.property_u32("interrupt-parent", PHANDLE_GIC)?;
-    fdt.property_string("compatible", "linux,dummy-virt")?;
-    fdt.property_u32("#address-cells", 0x2)?;
-    fdt.property_u32("#size-cells", 0x2)?;
+impl<'a, T> FdtBuilder<'a, T>
+where
+    T: GuestMemory,
+{
+    pub fn new(cmdline: &'a str, num_vcpus: u32, guest_mem: &'a T, fdt_load_offset: u64) -> Self {
+        FdtBuilder {
+            cmdline,
+            num_vcpus,
+            guest_mem,
+            fdt_load_offset,
+            serial_addr: 0x40000000,
+            rtc_addr: 0x40001000,
+        }
+    }
 
-    create_chosen_node(&mut fdt, cmdline)?;
+    pub fn set_serial_node_addr(&mut self, addr: u64) -> &mut Self {
+        self.serial_addr = addr;
+        self
+    }
 
-    let mem_size: u64 = guest_mem.iter().map(|region| region.len() as u64).sum();
-    create_memory_node(&mut fdt, mem_size)?;
-    create_cpu_nodes(&mut fdt, num_vcpus)?;
-    create_gic_node(&mut fdt, true, num_vcpus as u64)?;
-    create_serial_node(&mut fdt, serial_addr)?;
-    create_rtc_node(&mut fdt, rtc_addr)?;
-    create_timer_node(&mut fdt, num_vcpus)?;
-    create_psci_node(&mut fdt)?;
-    create_pmu_node(&mut fdt, num_vcpus)?;
+    pub fn set_rtc_addr(&mut self, addr: u64) -> &mut Self {
+        self.rtc_addr = addr;
+        self
+    }
 
-    fdt.end_node(root_node)?;
-    let fdt_final = fdt.finish()?;
+    pub fn create_fdt(&self) -> Result<()> {
+        let mut fdt = FdtWriter::new()?;
 
-    let fdt_address = GuestAddress(AARCH64_PHYS_MEM_START + fdt_load_offset);
-    guest_mem.write_slice(fdt_final.as_slice(), fdt_address)?;
+        // The whole thing is put into one giant node with s
+        // ome top level properties
+        let root_node = fdt.begin_node("")?;
+        fdt.property_u32("interrupt-parent", PHANDLE_GIC)?;
+        fdt.property_string("compatible", "linux,dummy-virt")?;
+        fdt.property_u32("#address-cells", 0x2)?;
+        fdt.property_u32("#size-cells", 0x2)?;
 
-    Ok(())
+        create_chosen_node(&mut fdt, self.cmdline)?;
+
+        let mem_size: u64 = self
+            .guest_mem
+            .iter()
+            .map(|region| region.len() as u64)
+            .sum();
+        create_memory_node(&mut fdt, mem_size)?;
+        create_cpu_nodes(&mut fdt, self.num_vcpus)?;
+        create_gic_node(&mut fdt, true, self.num_vcpus as u64)?;
+        create_serial_node(&mut fdt, self.serial_addr)?;
+        create_rtc_node(&mut fdt, self.rtc_addr)?;
+        create_timer_node(&mut fdt, self.num_vcpus)?;
+        create_psci_node(&mut fdt)?;
+        create_pmu_node(&mut fdt, self.num_vcpus)?;
+
+        fdt.end_node(root_node)?;
+        let fdt_final = fdt.finish()?;
+
+        let fdt_address = GuestAddress(AARCH64_PHYS_MEM_START + self.fdt_load_offset);
+        self.guest_mem
+            .write_slice(fdt_final.as_slice(), fdt_address)?;
+
+        Ok(())
+    }
 }
 
 fn create_chosen_node(fdt: &mut FdtWriter, cmdline: &str) -> Result<()> {
